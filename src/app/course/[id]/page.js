@@ -13,7 +13,7 @@ export default function CoursePage() {
   const [videos, setVideos] = useState([]);
   const [currentVideo, setCurrentVideo] = useState(null);
   const [playedSeconds, setPlayedSeconds] = useState(0);
-  const [userClickedPlay, setUserClickedPlay] = useState(false); // Bunny requires user interaction
+  const [userClickedPlay, setUserClickedPlay] = useState(false);
 
   // Fetch videos from Firestore
   useEffect(() => {
@@ -33,9 +33,11 @@ export default function CoursePage() {
         const firstVideo = videosData[0];
         setCurrentVideo(firstVideo);
 
-        // Load last watched progress
-        const savedProgress = localStorage.getItem(`videoProgress-${firstVideo.id}`);
-        setPlayedSeconds(savedProgress ? parseFloat(savedProgress) : 0);
+        // Load last watched progress safely
+        if (typeof window !== "undefined") {
+          const savedProgress = localStorage.getItem(`videoProgress-${firstVideo.id}`);
+          setPlayedSeconds(savedProgress ? parseFloat(savedProgress) : 0);
+        }
       }
     };
 
@@ -44,17 +46,17 @@ export default function CoursePage() {
 
   // Auto-save approximate progress every 5 sec
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     const interval = setInterval(() => {
       if (currentVideo && userClickedPlay) {
-        // Save approximate time
-        // Bunny iframe doesn’t expose currentTime, so we just increment seconds while playing
-        setPlayedSeconds(prev => {
+        setPlayedSeconds((prev) => {
           const next = prev + 5;
           localStorage.setItem(`videoProgress-${currentVideo.id}`, next);
           return next;
         });
       }
-    }, 5000); // every 5 sec
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [currentVideo, userClickedPlay]);
@@ -62,9 +64,11 @@ export default function CoursePage() {
   // When user selects video from playlist
   const handleVideoSelect = (video) => {
     setCurrentVideo(video);
-    const savedProgress = localStorage.getItem(`videoProgress-${video.id}`);
-    setPlayedSeconds(savedProgress ? parseFloat(savedProgress) : 0);
-    setUserClickedPlay(false); // user needs to click play again
+    if (typeof window !== "undefined") {
+      const savedProgress = localStorage.getItem(`videoProgress-${video.id}`);
+      setPlayedSeconds(savedProgress ? parseFloat(savedProgress) : 0);
+    }
+    setUserClickedPlay(false);
   };
 
   // Construct iframe URL with start time
@@ -75,7 +79,6 @@ export default function CoursePage() {
   return (
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-7xl mx-auto">
-
         {/* Back Button */}
         <button
           onClick={() => router.push("/dashboard")}
@@ -85,7 +88,6 @@ export default function CoursePage() {
         </button>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
           {/* LEFT SIDE - VIDEO */}
           <div className="lg:col-span-2 bg-white rounded-xl shadow p-4">
             {currentVideo && (
@@ -103,13 +105,9 @@ export default function CoursePage() {
                     allow="autoplay; encrypted-media; fullscreen"
                     allowFullScreen
                     className="rounded-lg"
-                    onClick={() => setUserClickedPlay(true)} // user clicked play
+                    onClick={() => setUserClickedPlay(true)}
                   />
                 </div>
-                {!userClickedPlay && (
-                  <p className="mt-2 text-sm text-gray-600">
-                  </p>
-                )}
               </>
             )}
           </div>
@@ -138,7 +136,6 @@ export default function CoursePage() {
               ))}
             </div>
           </div>
-
         </div>
       </div>
     </div>
