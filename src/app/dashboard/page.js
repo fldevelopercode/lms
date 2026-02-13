@@ -32,7 +32,7 @@ export default function Dashboard() {
 
   // 2️⃣ Fetch courses
   useEffect(() => {
-    const fetchCourses = async () => {
+    const fetchCourses = async () => { 
       const querySnapshot = await getDocs(collection(db, "courses"));
       setCourses(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     };
@@ -83,7 +83,7 @@ export default function Dashboard() {
   if (!userProfile) return <p className="text-center mt-20">Loading...</p>;
 
   return (
-    <div className="p-8 mt-20 bg-gray-50 min-h-screen">
+    <div className="p-15 mt-0 bg-gray-50 min-h-screen">
       {/* Header */}
       <div className="flex flex-col md:flex-row items-center justify-between mb-10">
         <h1 className="text-3xl md:text-4xl font-bold text-[#7607B3]">
