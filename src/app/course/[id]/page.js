@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
+import { db, initAnalytics } from "@/lib/firebase"; // client-safe analytics
 import { collection, getDocs } from "firebase/firestore";
 
 export default function CoursePage() {
@@ -15,9 +15,18 @@ export default function CoursePage() {
   const [playedSeconds, setPlayedSeconds] = useState(0);
   const [userClickedPlay, setUserClickedPlay] = useState(false);
 
+  // Initialize Firebase Analytics (client-only)
+  useEffect(() => {
+    initAnalytics().then((analytics) => {
+      if (analytics) console.log("Analytics ready!");
+    });
+  }, []);
+
   // Fetch videos from Firestore
   useEffect(() => {
     const fetchVideos = async () => {
+      if (!courseId) return;
+
       const querySnapshot = await getDocs(
         collection(db, `courses/${courseId}/videos`)
       );
@@ -35,13 +44,15 @@ export default function CoursePage() {
 
         // Load last watched progress safely
         if (typeof window !== "undefined") {
-          const savedProgress = localStorage.getItem(`videoProgress-${firstVideo.id}`);
+          const savedProgress = localStorage.getItem(
+            `videoProgress-${firstVideo.id}`
+          );
           setPlayedSeconds(savedProgress ? parseFloat(savedProgress) : 0);
         }
       }
     };
 
-    if (courseId) fetchVideos();
+    fetchVideos();
   }, [courseId]);
 
   // Auto-save approximate progress every 5 sec
@@ -72,9 +83,8 @@ export default function CoursePage() {
   };
 
   // Construct iframe URL with start time
-  const getIframeUrl = (url, seconds) => {
-    return seconds > 0 ? `${url}#t=${Math.floor(seconds)}` : url;
-  };
+  const getIframeUrl = (url, seconds) =>
+    seconds > 0 ? `${url}#t=${Math.floor(seconds)}` : url;
 
   return (
     <div className="min-h-screen bg-gray-100 p-8">
