@@ -1,7 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics, isSupported } from "firebase/analytics";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCsfDHk8tlOK6r1OPt14kBLR4OEvCXwK4w",
@@ -13,20 +12,26 @@ const firebaseConfig = {
   measurementId: "G-5MZF1RDS6P"
 };
 
+// Initialize Firebase app
 const app = initializeApp(firebaseConfig);
 
+// Auth and Firestore safe for server & client
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
+// ✅ Analytics client-side only
 let analytics = null;
 
-// ✅ Analytics sirf client side pe chalega
-if (typeof window !== "undefined") {
-  isSupported().then((yes) => {
-    if (yes) {
-      analytics = getAnalytics(app);
-    }
-  });
-}
+export const initAnalytics = async () => {
+  if (typeof window === "undefined") return; // server safe
+  if (analytics) return analytics; // already initialized
 
-export { analytics };
+  // dynamic import ensures server-side safety
+  const { getAnalytics, isSupported } = await import("firebase/analytics");
+  if (await isSupported()) {
+    analytics = getAnalytics(app);
+  }
+  return analytics;
+};
+
+export { analytics, app };
