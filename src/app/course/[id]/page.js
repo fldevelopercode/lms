@@ -209,6 +209,7 @@ export default function CoursePage() {
     }
   };
 
+  // 🔥 FIXED: Certificate generation with user's full name from Firestore
   const handleGenerateCertificate = async () => {
     if (!user || !courseData) {
       alert("Please login to generate certificate");
@@ -217,10 +218,33 @@ export default function CoursePage() {
     
     setGeneratingCert(true);
     try {
-      const userName = user.displayName || user.email?.split('@')[0] || "Student";
+      // Get user's full name from Firestore
+      let fullName = "Student";
+      
+      // Fetch user profile from Firestore
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        if (userData.firstName && userData.lastName) {
+          fullName = `${userData.firstName} ${userData.lastName}`;
+          console.log("📝 Using name from Firestore:", fullName);
+        } else if (userData.displayName) {
+          fullName = userData.displayName;
+        } else if (user.displayName) {
+          fullName = user.displayName;
+        } else {
+          fullName = user.email?.split('@')[0] || "Student";
+        }
+      } else {
+        // Fallback to auth data if no Firestore doc
+        fullName = user.displayName || user.email?.split('@')[0] || "Student";
+      }
       
       const { pdf, certificateId, pdfUrl } = await generateCertificatePDF(
-        { name: userName, email: user.email },
+        { 
+          name: fullName,  // ✅ Full name from user profile
+          email: user.email 
+        },
         { title: courseData.title || "Course Completion" }
       );
       
@@ -286,7 +310,6 @@ export default function CoursePage() {
     );
   }
 
-  // 🔥 FIXED: CENTERED LAYOUT WITH PROPER SPACING
   return (
     <div className="min-h-screen bg-gray-100">
       {/* Header with Back button - Centered */}
