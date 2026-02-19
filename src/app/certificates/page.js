@@ -175,7 +175,7 @@ export default function CertificatesPage() {
                 </div>
 
                 {/* Card Footer - Buttons */}
-                <div className="p-4 border-t bg-gray-50">
+                <div className="p-4 bg-gray-50">
                   <div className="flex gap-2">
                     {/* 🔥 FIXED: View Details button */}
                     <button

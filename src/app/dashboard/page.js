@@ -48,6 +48,27 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, [router]);
 
+ // 🔥 ADD THIS CODE HERE - AFTER the auth useEffect
+  // Clear old course completion data on login
+  useEffect(() => {
+    const clearOldData = () => {
+      if (!userProfile?.uid) return;
+      
+      const keys = Object.keys(localStorage);
+      keys.forEach(key => {
+        if (key.startsWith('completed-') && !key.includes(userProfile.uid)) {
+          console.log("🧹 Removing old key:", key);
+          localStorage.removeItem(key);
+        }
+      });
+    };
+    
+    if (userProfile) {
+      clearOldData();
+    }
+  }, [userProfile]);
+
+
   // 2️⃣ Fetch courses
   useEffect(() => {
     const fetchCourses = async () => { 

@@ -4,7 +4,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase";
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, query, where } from "firebase/firestore";
 import dynamic from "next/dynamic";
 import { generateCertificatePDF } from "@/lib/generateCertificate";
 import { saveCertificate, hasCertificate } from "@/lib/firebaseCertificates";
@@ -43,41 +43,82 @@ export default function CoursePage() {
     return () => unsubscribe();
   }, []);
 
-  // Load completion with user-specific keys
+  // 🔥 FIXED: Load completion from Firestore + localStorage
   useEffect(() => {
     if (!user || !courseId) {
       setCompletedItems({});
       return;
     }
-    
-    const loadUserCompletion = () => {
-      const key = `completed-${user.uid}-${courseId}`;
-      const saved = localStorage.getItem(key);
+
+    const loadCompletion = async () => {
+      console.log("📡 Loading completion for user:", user.uid);
       
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (typeof parsed === 'object' && parsed !== null) {
-            console.log("📥 Loading completion for user:", user.uid, parsed);
-            setCompletedItems(parsed);
+      try {
+        // First try to load from Firestore
+        const progressQuery = query(
+          collection(db, "userProgress"),
+          where("userId", "==", user.uid),
+          where("courseId", "==", courseId)
+        );
+        
+        const snapshot = await getDocs(progressQuery);
+        const firestoreData = {};
+        
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.videoId) {
+            firestoreData[data.videoId] = data.completed || false;
+          }
+        });
+        
+        console.log("📥 Firestore data:", firestoreData);
+        
+        if (Object.keys(firestoreData).length > 0) {
+          setCompletedItems(firestoreData);
+          
+          // Update localStorage for offline
+          const key = `completed-${user.uid}-${courseId}`;
+          localStorage.setItem(key, JSON.stringify(firestoreData));
+        } else {
+          // Fallback to localStorage
+          const key = `completed-${user.uid}-${courseId}`;
+          const saved = localStorage.getItem(key);
+          
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              setCompletedItems(parsed);
+            } catch (e) {
+              setCompletedItems({});
+            }
           } else {
             setCompletedItems({});
           }
-        } catch (e) {
-          console.error("Error parsing completion:", e);
+        }
+        
+        // Clean up old non-user-specific key
+        const oldKey = `completed-${courseId}`;
+        localStorage.removeItem(oldKey);
+        
+      } catch (error) {
+        console.error("❌ Error loading from Firestore:", error);
+        
+        // Fallback to localStorage
+        const key = `completed-${user.uid}-${courseId}`;
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          try {
+            setCompletedItems(JSON.parse(saved));
+          } catch (e) {
+            setCompletedItems({});
+          }
+        } else {
           setCompletedItems({});
         }
-      } else {
-        console.log("🆕 Fresh start for user:", user.uid);
-        setCompletedItems({});
       }
-      
-      const oldKey = `completed-${courseId}`;
-      localStorage.removeItem(oldKey);
     };
-    
-    loadUserCompletion();
-    
+
+    loadCompletion();
   }, [user, courseId]);
 
   // Check if certificate already exists for this course
@@ -137,16 +178,6 @@ export default function CoursePage() {
         allItems.sort((a, b) => (a.order || 0) - (b.order || 0));
         setItems(allItems);
         
-        setCompletedItems(prev => {
-          const validCompletions = {};
-          Object.keys(prev).forEach(key => {
-            if (allItems.some(item => item.id === key)) {
-              validCompletions[key] = prev[key];
-            }
-          });
-          return validCompletions;
-        });
-        
         if (allItems.length > 0) {
           setCurrentItem(allItems[0]);
         }
@@ -179,14 +210,29 @@ export default function CoursePage() {
     setPlayerLoading(true);
   };
 
+  // 🔥 FIXED: toggleComplete with Firestore sync
   const toggleComplete = (id) => {
     setCompletedItems(prev => {
       const newState = { ...prev, [id]: !prev[id] };
       
       if (user && courseId) {
+        // Save to localStorage
         const key = `completed-${user.uid}-${courseId}`;
         localStorage.setItem(key, JSON.stringify(newState));
-        console.log("💾 Saved completion for user:", user.uid, newState);
+        console.log("💾 Saved to localStorage:", newState);
+        
+        // 🔥 CRITICAL: Save to Firestore for mobile sync
+        const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
+        setDoc(progressRef, {
+          userId: user.uid,
+          courseId,
+          videoId: id,
+          completed: newState[id],
+          lastWatched: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, { merge: true })
+        .then(() => console.log("✅ Firestore sync successful"))
+        .catch(error => console.error("❌ Firestore error:", error));
       }
       
       return newState;
@@ -209,7 +255,6 @@ export default function CoursePage() {
     }
   };
 
-  // 🔥 FIXED: Certificate generation with user's full name from Firestore
   const handleGenerateCertificate = async () => {
     if (!user || !courseData) {
       alert("Please login to generate certificate");
@@ -221,13 +266,11 @@ export default function CoursePage() {
       // Get user's full name from Firestore
       let fullName = "Student";
       
-      // Fetch user profile from Firestore
       const userDoc = await getDoc(doc(db, "users", user.uid));
       if (userDoc.exists()) {
         const userData = userDoc.data();
         if (userData.firstName && userData.lastName) {
           fullName = `${userData.firstName} ${userData.lastName}`;
-          console.log("📝 Using name from Firestore:", fullName);
         } else if (userData.displayName) {
           fullName = userData.displayName;
         } else if (user.displayName) {
@@ -236,15 +279,11 @@ export default function CoursePage() {
           fullName = user.email?.split('@')[0] || "Student";
         }
       } else {
-        // Fallback to auth data if no Firestore doc
         fullName = user.displayName || user.email?.split('@')[0] || "Student";
       }
       
       const { pdf, certificateId, pdfUrl } = await generateCertificatePDF(
-        { 
-          name: fullName,  // ✅ Full name from user profile
-          email: user.email 
-        },
+        { name: fullName, email: user.email },
         { title: courseData.title || "Course Completion" }
       );
       
@@ -312,7 +351,7 @@ export default function CoursePage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header with Back button - Centered */}
+      {/* Header with Back button */}
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <button
@@ -324,10 +363,10 @@ export default function CoursePage() {
         </div>
       </div>
 
-      {/* Main Content - Centered with max width */}
+      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex flex-col lg:flex-row gap-8">
-          {/* Left Column - Video/Content Area - 2/3 width */}
+          {/* Left Column */}
           <div className="lg:w-2/3">
             <div className="bg-white rounded-xl shadow-lg p-5 sm:p-6">
               {currentItem ? (
@@ -407,7 +446,7 @@ export default function CoursePage() {
             </div>
           </div>
 
-          {/* Right Column - Playlist - 1/3 width */}
+          {/* Right Column */}
           <div className="lg:w-1/3">
             <div className="bg-white rounded-xl shadow-lg p-5 sticky top-20">
               <h3 className="text-lg font-semibold text-[#D2640D] mb-4">
