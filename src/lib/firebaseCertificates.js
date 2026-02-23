@@ -1,13 +1,13 @@
-// lib/firebaseCertificates.js - FIXED WITH NEW CDN URL
+// lib/firebaseCertificates.js
 import { db } from "./firebase";
-import { collection, addDoc, query, where, getDocs, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, getDocs, updateDoc, doc, setDoc } from "firebase/firestore";
 
 // 🔥 Your Bunny.net credentials
 const BUNNY_PASSWORD = "42269309-ee85-49a8-908257202a36-a308-4ebd";
 const BUNNY_STORAGE_ZONE = "lms-certificates";
 const BUNNY_REGION = "de";
 
-// ✅ NEW - Use your pull zone URL
+// ✅ Use your pull zone URL
 const BUNNY_CDN_URL = "https://lms-certificates-pull.b-cdn.net";
 const BUNNY_STORAGE_URL = "https://storage.bunnycdn.com";
 
@@ -18,9 +18,8 @@ const uploadToBunny = async (fileName, pdfBlob) => {
   }
 
   try {
-    // Upload to storage
     const url = `${BUNNY_STORAGE_URL}/${BUNNY_STORAGE_ZONE}/${fileName}`;
-    console.log("📤 Uploading to:", url);
+    console.log("📤 Uploading to Bunny.net:", fileName);
     
     const response = await fetch(url, {
       method: 'PUT',
@@ -37,7 +36,6 @@ const uploadToBunny = async (fileName, pdfBlob) => {
       throw new Error(`Upload failed: ${response.status}`);
     }
 
-    // ✅ Return CDN URL from pull zone
     const cdnUrl = `${BUNNY_CDN_URL}/${fileName}`;
     console.log("✅ Upload successful:", cdnUrl);
     return cdnUrl;
@@ -48,10 +46,10 @@ const uploadToBunny = async (fileName, pdfBlob) => {
   }
 };
 
-// ✅ FIXED: saveCertificate function
+// 🔥 FIXED: Use certificateId as document ID instead of auto-generated ID
 export const saveCertificate = async (userId, courseId, certificateId, pdfBlob) => {
   try {
-    console.log("📄 Saving certificate for user:", userId);
+    console.log("📄 Saving certificate for user:", userId, "certificateId:", certificateId);
     
     const fileName = `certificates/${userId}/${courseId}/${certificateId}.pdf`;
     const pdfUrl = await uploadToBunny(fileName, pdfBlob);
@@ -67,9 +65,12 @@ export const saveCertificate = async (userId, courseId, certificateId, pdfBlob) 
       storage: "bunny"
     };
     
-    const docRef = await addDoc(collection(db, "certificates"), certificateData);
-    console.log("✅ Certificate saved to Firestore:", docRef.id);
-    return { id: docRef.id, ...certificateData };
+    // ✅ Use certificateId as the document ID
+    const docRef = doc(db, "certificates", certificateId);
+    await setDoc(docRef, certificateData);
+    
+    console.log("✅ Certificate saved to Firestore with ID:", certificateId);
+    return { id: certificateId, ...certificateData };
     
   } catch (error) {
     console.error("❌ Error saving certificate:", error);
@@ -77,7 +78,7 @@ export const saveCertificate = async (userId, courseId, certificateId, pdfBlob) 
   }
 };
 
-// ✅ FIXED: hasCertificate function
+// 🔥 FIXED: hasCertificate function
 export const hasCertificate = async (userId, courseId) => {
   try {
     console.log("🔍 Checking certificate for user:", userId, "course:", courseId);
@@ -99,7 +100,7 @@ export const hasCertificate = async (userId, courseId) => {
   }
 };
 
-// ✅ FIXED: getUserCertificates function
+// 🔥 FIXED: getUserCertificates function
 export const getUserCertificates = async (userId) => {
   try {
     console.log("📚 Fetching certificates for user:", userId);
@@ -114,7 +115,6 @@ export const getUserCertificates = async (userId) => {
     
     const certificates = [];
     querySnapshot.forEach((doc) => {
-      console.log("📄 Certificate:", doc.id, doc.data());
       certificates.push({ id: doc.id, ...doc.data() });
     });
     
@@ -126,9 +126,11 @@ export const getUserCertificates = async (userId) => {
   }
 };
 
-// ✅ NEW: verifyCertificate function
+// 🔥 verifyCertificate function
 export const verifyCertificate = async (certificateId) => {
   try {
+    console.log("🔐 Verifying certificate:", certificateId);
+    
     const q = query(
       collection(db, "certificates"),
       where("certificateId", "==", certificateId)
@@ -142,12 +144,33 @@ export const verifyCertificate = async (certificateId) => {
         verified: true,
         verifiedAt: new Date().toISOString()
       });
+      console.log("✅ Certificate verified");
       return true;
     }
+    
+    console.log("❌ Certificate not found");
     return false;
     
   } catch (error) {
     console.error("❌ Error verifying certificate:", error);
     return false;
+  }
+};
+
+// 🔥 Get certificate by ID
+export const getCertificateById = async (certificateId) => {
+  try {
+    const docRef = doc(db, "certificates", certificateId);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+    
+    return null;
+    
+  } catch (error) {
+    console.error("❌ Error getting certificate:", error);
+    return null;
   }
 };

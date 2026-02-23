@@ -7,9 +7,9 @@ import { db, auth } from "@/lib/firebase";
 import { collection, doc, getDoc, getDocs, setDoc, query, where } from "firebase/firestore";
 import dynamic from "next/dynamic";
 
-// Comment out problematic imports temporarily
-// import { generateCertificatePDF } from "@/lib/generateCertificate";
-// import { saveCertificate, hasCertificate } from "@/lib/firebaseCertificates";
+// 🔥 UNCOMMENT THESE IMPORTS
+import { generateCertificatePDF } from "@/lib/generateCertificate";
+import { saveCertificate, hasCertificate } from "@/lib/firebaseCertificates";
 
 const VideoPlayer = dynamic(() => import("@/components/VideoPlayer"), {
   ssr: false,
@@ -52,82 +52,85 @@ export default function CoursePage() {
       return;
     }
 
-   const loadCompletion = async () => {
-  console.log("📡 Loading completion for user:", user.uid);
-  
-  try {
-    const progressQuery = query(
-      collection(db, "userProgress"),
-      where("userId", "==", user.uid),
-      where("courseId", "==", courseId)
-    );
-    
-    const snapshot = await getDocs(progressQuery);
-    const firestoreData = {};
-    
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      if (data.videoId) {
-        // 🔥 FIX: Explicitly check for true, fallback to false
-        firestoreData[data.videoId] = data.completed === true;
-        console.log(`📌 ${data.videoId}: completed = ${data.completed}`);
-      }
-    });
-    
-    console.log("📥 Firestore data loaded:", firestoreData);
-    
-    // Always set from Firestore if data exists
-    if (Object.keys(firestoreData).length > 0) {
-      setCompletedItems(firestoreData);
+    const loadCompletion = async () => {
+      console.log("📡 Loading completion for user:", user.uid);
       
-      // Update localStorage
-      const key = `completed-${user.uid}-${courseId}`;
-      localStorage.setItem(key, JSON.stringify(firestoreData));
-      console.log("💾 Updated localStorage with Firestore data");
-    } else {
-      // Fallback to localStorage
-      const key = `completed-${user.uid}-${courseId}`;
-      const saved = localStorage.getItem(key);
-      
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setCompletedItems(parsed);
-          console.log("📦 Using localStorage data:", parsed);
-        } catch (e) {
+      try {
+        const progressQuery = query(
+          collection(db, "userProgress"),
+          where("userId", "==", user.uid),
+          where("courseId", "==", courseId)
+        );
+        
+        const snapshot = await getDocs(progressQuery);
+        const firestoreData = {};
+        
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.videoId) {
+            // 🔥 FIX: Explicitly check for true
+            firestoreData[data.videoId] = data.completed === true;
+            console.log(`📌 ${data.videoId}: completed = ${data.completed}`);
+          }
+        });
+        
+        console.log("📥 Firestore data loaded:", firestoreData);
+        
+        if (Object.keys(firestoreData).length > 0) {
+          setCompletedItems(firestoreData);
+          
+          const key = `completed-${user.uid}-${courseId}`;
+          localStorage.setItem(key, JSON.stringify(firestoreData));
+          console.log("💾 Updated localStorage with Firestore data");
+        } else {
+          const key = `completed-${user.uid}-${courseId}`;
+          const saved = localStorage.getItem(key);
+          
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              setCompletedItems(parsed);
+              console.log("📦 Using localStorage data:", parsed);
+            } catch (e) {
+              setCompletedItems({});
+            }
+          } else {
+            setCompletedItems({});
+          }
+        }
+        
+        const oldKey = `completed-${courseId}`;
+        localStorage.removeItem(oldKey);
+        
+      } catch (error) {
+        console.error("❌ Error loading from Firestore:", error);
+        
+        const key = `completed-${user.uid}-${courseId}`;
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          try {
+            setCompletedItems(JSON.parse(saved));
+          } catch (e) {
+            setCompletedItems({});
+          }
+        } else {
           setCompletedItems({});
         }
-      } else {
-        setCompletedItems({});
       }
-    }
-    
-    const oldKey = `completed-${courseId}`;
-    localStorage.removeItem(oldKey);
-    
-  } catch (error) {
-    console.error("❌ Error loading from Firestore:", error);
-    
-    const key = `completed-${user.uid}-${courseId}`;
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        setCompletedItems(JSON.parse(saved));
-      } catch (e) {
-        setCompletedItems({});
-      }
-    } else {
-      setCompletedItems({});
-    }
-  }
-};
+    };
+
     loadCompletion();
   }, [user, courseId]);
 
-  // Check if certificate already exists (simplified)
+  // 🔥 FIX: Check if certificate already exists
   useEffect(() => {
-    // Temporary - always false
-    setCertificateGenerated(false);
+    const checkExistingCertificate = async () => {
+      if (user && courseId) {
+        const exists = await hasCertificate(user.uid, courseId);
+        setCertificateGenerated(exists);
+      }
+    };
+    checkExistingCertificate();
   }, [user, courseId]);
 
   // Fetch course content
@@ -210,26 +213,22 @@ export default function CoursePage() {
     setPlayerLoading(true);
   };
 
-  // toggleComplete with proper async/await
+  // 🔥 FIXED: toggleComplete with proper async/await
   const toggleComplete = async (id) => {
-    // Get current value
     const currentValue = completedItems[id] || false;
     const newValue = !currentValue;
     
-    // Update UI immediately
     setCompletedItems(prev => ({
       ...prev,
       [id]: newValue
     }));
     
     if (user && courseId) {
-      // Update localStorage
       const key = `completed-${user.uid}-${courseId}`;
       const newState = { ...completedItems, [id]: newValue };
       localStorage.setItem(key, JSON.stringify(newState));
       console.log("💾 Saved to localStorage:", newState);
       
-      // Save to Firestore
       try {
         const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
         await setDoc(progressRef, {
@@ -264,29 +263,67 @@ export default function CoursePage() {
     }
   };
 
-  // Simplified certificate generation (for testing)
-  const handleGenerateCertificate = async () => {
-    if (!user || !courseData) {
-      alert("Please login to generate certificate");
-      return;
+  // 🔥 FIXED: Real certificate generation
+const handleGenerateCertificate = async () => {
+  if (!user || !courseData) {
+    alert("Please login to generate certificate");
+    return;
+  }
+  
+  setGeneratingCert(true);
+  try {
+    // Get user's full name
+    let fullName = "Student";
+    
+    const userDoc = await getDoc(doc(db, "users", user.uid));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      if (userData.firstName && userData.lastName) {
+        fullName = `${userData.firstName} ${userData.lastName}`;
+      } else if (userData.displayName) {
+        fullName = userData.displayName;
+      } else if (user.displayName) {
+        fullName = user.displayName;
+      } else {
+        fullName = user.email?.split('@')[0] || "Student";
+      }
+    } else {
+      fullName = user.displayName || user.email?.split('@')[0] || "Student";
     }
     
-    setGeneratingCert(true);
-    try {
-      // Simulate certificate generation
-      setTimeout(() => {
-        alert("Certificate generation would happen here");
-        setGeneratingCert(false);
-        setCertificateGenerated(true);
-        setShowCertificate(false);
-      }, 2000);
-      
-    } catch (error) {
-      console.error("Certificate error:", error);
-      alert("Certificate generation failed. Please try again.");
-      setGeneratingCert(false);
-    }
-  };
+    console.log("📝 Generating certificate for:", fullName);
+    console.log("📚 Course:", courseData.title);
+    
+    // 🔥 Generate PDF
+    const { pdf, certificateId, pdfUrl } = await generateCertificatePDF(
+      { name: fullName, email: user.email },
+      { title: courseData.title || "Course Completion" }
+    );
+    
+    console.log("✅ PDF generated, saving...");
+    
+    // 🔥 Save to Firestore
+    await saveCertificate(user.uid, courseId, certificateId, pdf);
+    
+    console.log("✅ Certificate saved, URL:", pdfUrl);
+    
+    setCertificatePdfBlob(pdf);
+    setCertificateUrl(pdfUrl);
+    
+    setTimeout(() => {
+      setShowModal(true);
+    }, 100);
+    
+    setCertificateGenerated(true);
+    setShowCertificate(false);
+    
+  } catch (error) {
+    console.error("❌ Certificate error:", error);
+    alert("Certificate generation failed: " + error.message);
+  } finally {
+    setGeneratingCert(false);
+  }
+};
 
   const closeModal = () => {
     setShowModal(false);
