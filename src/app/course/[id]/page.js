@@ -43,7 +43,7 @@ export default function CoursePage() {
     return () => unsubscribe();
   }, []);
 
-  // 🔥 FIXED: Load completion from Firestore + localStorage
+  // Load completion from Firestore + localStorage
   useEffect(() => {
     if (!user || !courseId) {
       setCompletedItems({});
@@ -54,7 +54,6 @@ export default function CoursePage() {
       console.log("📡 Loading completion for user:", user.uid);
       
       try {
-        // First try to load from Firestore
         const progressQuery = query(
           collection(db, "userProgress"),
           where("userId", "==", user.uid),
@@ -76,11 +75,9 @@ export default function CoursePage() {
         if (Object.keys(firestoreData).length > 0) {
           setCompletedItems(firestoreData);
           
-          // Update localStorage for offline
           const key = `completed-${user.uid}-${courseId}`;
           localStorage.setItem(key, JSON.stringify(firestoreData));
         } else {
-          // Fallback to localStorage
           const key = `completed-${user.uid}-${courseId}`;
           const saved = localStorage.getItem(key);
           
@@ -96,14 +93,12 @@ export default function CoursePage() {
           }
         }
         
-        // Clean up old non-user-specific key
         const oldKey = `completed-${courseId}`;
         localStorage.removeItem(oldKey);
         
       } catch (error) {
         console.error("❌ Error loading from Firestore:", error);
         
-        // Fallback to localStorage
         const key = `completed-${user.uid}-${courseId}`;
         const saved = localStorage.getItem(key);
         if (saved) {
@@ -121,7 +116,7 @@ export default function CoursePage() {
     loadCompletion();
   }, [user, courseId]);
 
-  // Check if certificate already exists for this course
+  // Check if certificate already exists
   useEffect(() => {
     const checkExistingCertificate = async () => {
       if (user && courseId) {
@@ -132,7 +127,7 @@ export default function CoursePage() {
     checkExistingCertificate();
   }, [user, courseId]);
 
-  // Fetch course content
+  // Fetch course content - ✅ FIXED with proper order
   useEffect(() => {
     const fetchItems = async () => {
       if (!courseId) return;
@@ -146,6 +141,7 @@ export default function CoursePage() {
           
           const data = courseDoc.data();
           
+          // ✅ Fetch videos from sub-collection
           const videoSnap = await getDocs(collection(db, `courses/${courseId}/videos`));
           videoSnap.forEach((docSnap) => {
             const data = docSnap.data();
@@ -160,6 +156,7 @@ export default function CoursePage() {
             });
           });
 
+          // ✅ Fetch resources with order field
           if (data.resources?.length) {
             data.resources.forEach((res, i) => {
               allItems.push({
@@ -168,14 +165,17 @@ export default function CoursePage() {
                 title: res.title || "Untitled",
                 url: res.url || "",
                 content: res.content || "",
-                order: res.order || (allItems.length + i),
+                order: res.order || 0,  // ✅ Use order from Firebase
                 ...res,
               });
             });
           }
         }
 
+        // ✅ Sort by order
         allItems.sort((a, b) => (a.order || 0) - (b.order || 0));
+        console.log("📋 Items with order:", allItems.map(i => ({ title: i.title, order: i.order })));
+        
         setItems(allItems);
         
         if (allItems.length > 0) {
@@ -210,18 +210,16 @@ export default function CoursePage() {
     setPlayerLoading(true);
   };
 
-  // 🔥 FIXED: toggleComplete with Firestore sync
+  // toggleComplete with Firestore sync
   const toggleComplete = (id) => {
     setCompletedItems(prev => {
       const newState = { ...prev, [id]: !prev[id] };
       
       if (user && courseId) {
-        // Save to localStorage
         const key = `completed-${user.uid}-${courseId}`;
         localStorage.setItem(key, JSON.stringify(newState));
         console.log("💾 Saved to localStorage:", newState);
         
-        // 🔥 CRITICAL: Save to Firestore for mobile sync
         const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
         setDoc(progressRef, {
           userId: user.uid,
@@ -263,7 +261,6 @@ export default function CoursePage() {
     
     setGeneratingCert(true);
     try {
-      // Get user's full name from Firestore
       let fullName = "Student";
       
       const userDoc = await getDoc(doc(db, "users", user.uid));
