@@ -26,23 +26,31 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
   const [isBuffering, setIsBuffering] = useState(true);
   const playerRef = useRef(null);
   const progressSetRef = useRef(false);
-  const lastSavedTimeRef = useRef(0); // 🔥 Track last saved time
+  const lastSavedTimeRef = useRef(0);
+  const saveTimeoutRef = useRef(null); // 🔥 NEW: Debounce saves
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(setUser);
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      console.log("🔥 Auth state changed:", user?.email);
+      setUser(user);
+    });
     return () => unsubscribe();
   }, []);
 
   // Load progress from Firestore
   useEffect(() => {
     const loadProgress = async () => {
-      if (!user || !videoId || !courseId) return;
+      if (!user || !videoId || !courseId) {
+        console.log("⏳ Waiting for user...");
+        return;
+      }
 
       try {
+        console.log(`📥 Loading progress for ${videoId}...`);
         const progressDoc = doc(db, "userProgress", `${user.uid}_${courseId}_${videoId}`);
         const docSnap = await getDoc(progressDoc);
         
@@ -51,28 +59,21 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
           const time = data.currentTime || 0;
           const completed = data.completed || false;
           
-          console.log(`📥 Firestore progress: ${time}s, completed: ${completed} for ${videoId}`);
-          
+          console.log(`✅ Loaded: ${time}s, completed: ${completed}`);
           setSavedProgress(time);
           localStorage.setItem(`progress-${videoId}`, JSON.stringify({ time, completed }));
-          lastSavedTimeRef.current = time; // 🔥 Track last saved
+          lastSavedTimeRef.current = time;
         } else {
           const cached = localStorage.getItem(`progress-${videoId}`);
           if (cached) {
             const { time } = JSON.parse(cached);
-            console.log(`📦 Cache progress: ${time}s for ${videoId}`);
+            console.log(`📦 Cache: ${time}s`);
             setSavedProgress(time);
             lastSavedTimeRef.current = time;
           }
         }
       } catch (error) {
-        console.error("Error loading progress:", error);
-        const cached = localStorage.getItem(`progress-${videoId}`);
-        if (cached) {
-          const { time } = JSON.parse(cached);
-          setSavedProgress(time);
-          lastSavedTimeRef.current = time;
-        }
+        console.error("❌ Error loading progress:", error);
       }
     };
 
@@ -84,7 +85,12 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     setPlayerReady(false);
     setIsBuffering(true);
     progressSetRef.current = false;
-    lastSavedTimeRef.current = 0; // 🔥 Reset on video change
+    lastSavedTimeRef.current = 0;
+    
+    // Clear any pending save
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
   }, [videoId]);
 
   // Set video position
@@ -100,55 +106,64 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     }
   }, [playerReady, savedProgress]);
 
-  // 🔥 FIXED: Save progress with completed flag and prevent downgrade
+  // 🔥 FIXED: Debounced save function
   const saveProgress = async (currentTime, duration) => {
-    if (!user || !videoId || !courseId || !currentTime) return;
-
-    // Prevent too frequent saves
-    if (Math.abs(currentTime - lastSavedTimeRef.current) < 3) return;
-    
-    const isCompleted = currentTime / duration > 0.95;
-    
-    // Har 5 second mein save karo
-    if (Math.floor(currentTime) % 5 === 0 || isCompleted) {
-      try {
-        const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${videoId}`);
-        
-        // 🔥 IMPORTANT: Pehle existing data check karo
-        const docSnap = await getDoc(progressRef);
-        const existingCompleted = docSnap.exists() ? docSnap.data().completed : false;
-        
-        // 🔥 FIX: Agar already completed hai to overwrite mat karo
-        if (existingCompleted && !isCompleted) {
-          console.log(`⏭️ Skipping save - already completed for ${videoId}`);
-          return;
-        }
-        
-        // 🔥 FIX: Don't downgrade completed status
-        const finalCompleted = isCompleted || existingCompleted;
-        
-        await setDoc(progressRef, {
-          userId: user.uid,
-          courseId,
-          videoId,
-          currentTime,
-          duration,
-          completed: finalCompleted,
-          lastWatched: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-        
-        localStorage.setItem(`progress-${videoId}`, JSON.stringify({ 
-          time: currentTime,
-          completed: finalCompleted 
-        }));
-        
-        lastSavedTimeRef.current = currentTime; // 🔥 Update last saved time
-        console.log(`💾 Saved: ${Math.floor(currentTime)}s, completed: ${finalCompleted}`);
-      } catch (error) {
-        console.error("Save error:", error);
-      }
+    // 🔥 CRITICAL: Check user on every save
+    if (!auth.currentUser || !videoId || !courseId) {
+      console.log("⏭️ No user, skipping save");
+      return;
     }
+
+    // Debounce to prevent too many saves
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) return;
+
+        const isCompleted = currentTime / duration > 0.95;
+        
+        // Check if we should save (every 5 seconds or on complete)
+        if (Math.floor(currentTime) % 5 === 0 || isCompleted) {
+          const progressRef = doc(db, "userProgress", `${currentUser.uid}_${courseId}_${videoId}`);
+          
+          // Check existing data
+          const docSnap = await getDoc(progressRef);
+          const existingCompleted = docSnap.exists() ? docSnap.data().completed : false;
+          
+          // Don't downgrade completed status
+          if (existingCompleted && !isCompleted) {
+            console.log(`⏭️ Already completed, skipping`);
+            return;
+          }
+          
+          const finalCompleted = isCompleted || existingCompleted;
+          
+          await setDoc(progressRef, {
+            userId: currentUser.uid,
+            courseId,
+            videoId,
+            currentTime,
+            duration,
+            completed: finalCompleted,
+            lastWatched: new Date().toISOString()
+          }, { merge: true });
+          
+          localStorage.setItem(`progress-${videoId}`, JSON.stringify({ 
+            time: currentTime,
+            completed: finalCompleted 
+          }));
+          
+          lastSavedTimeRef.current = currentTime;
+          console.log(`💾 Saved: ${Math.floor(currentTime)}s`);
+        }
+      } catch (error) {
+        console.error("❌ Save error:", error);
+      }
+    }, 1000); // Wait 1 second before saving
   };
 
   if (!isMounted) return null;
@@ -185,7 +200,7 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
         onEnded={() => {
           console.log("✅ Video ended");
           const duration = playerRef.current?.getDuration();
-          if (user) {
+          if (auth.currentUser) {
             saveProgress(duration, duration);
           }
           if (onVideoEnd) onVideoEnd();
