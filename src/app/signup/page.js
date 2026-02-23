@@ -29,6 +29,18 @@ export default function Signup() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
+      // 🔥 FIX: Clear any old data from previous users
+      const keys = Object.keys(localStorage);
+      keys.forEach(key => {
+        if (key.startsWith('completed-')) {
+          console.log("🧹 Removing old key:", key);
+          localStorage.removeItem(key);
+        }
+      });
+      
+      // Store current user ID
+      localStorage.setItem('lastUserId', user.uid);
+
       // 2️⃣ Create Firestore user document
       await setDoc(doc(db, "users", user.uid), {
         email,
@@ -43,7 +55,25 @@ export default function Signup() {
         enrolledCourses: []
       });
 
-      // 3️⃣ Redirect to dashboard
+      // 3️⃣ Store profile in sessionStorage
+      sessionStorage.setItem(
+        "userProfile",
+        JSON.stringify({
+          uid: user.uid,
+          email,
+          firstName,
+          lastName,
+          name: `${firstName} ${lastName}`,
+          phone: phone || "",
+          address: address || "",
+          city: city || "",
+          country: country || "",
+          profilePicture: "",
+          enrolledCourses: []
+        })
+      );
+
+      // 4️⃣ Redirect to dashboard
       router.push("/dashboard");
 
     } catch (err) {

@@ -23,6 +23,24 @@ export default function Login() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
+      // 🔥 FIX: Check if this is a new user (different from last login)
+      const lastUserId = localStorage.getItem('lastUserId');
+      
+      if (lastUserId && lastUserId !== user.uid) {
+        console.log('🆕 New user detected, clearing old data...');
+        
+        // Clear all course progress
+        const keys = Object.keys(localStorage);
+        keys.forEach(key => {
+          if (key.startsWith('completed-')) {
+            localStorage.removeItem(key);
+          }
+        });
+      }
+      
+      // Store current user ID
+      localStorage.setItem('lastUserId', user.uid);
+
       // 2️⃣ Fetch full profile from Firestore
       const userDocRef = doc(db, "users", user.uid);
       const userSnap = await getDoc(userDocRef);
