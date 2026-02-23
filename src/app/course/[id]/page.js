@@ -6,8 +6,10 @@ import { useParams, useRouter } from "next/navigation";
 import { db, auth } from "@/lib/firebase";
 import { collection, doc, getDoc, getDocs, setDoc, query, where } from "firebase/firestore";
 import dynamic from "next/dynamic";
-import { generateCertificatePDF } from "@/lib/generateCertificate";
-import { saveCertificate, hasCertificate } from "@/lib/firebaseCertificates";
+
+// Comment out problematic imports temporarily
+// import { generateCertificatePDF } from "@/lib/generateCertificate";
+// import { saveCertificate, hasCertificate } from "@/lib/firebaseCertificates";
 
 const VideoPlayer = dynamic(() => import("@/components/VideoPlayer"), {
   ssr: false,
@@ -116,15 +118,10 @@ export default function CoursePage() {
     loadCompletion();
   }, [user, courseId]);
 
-  // Check if certificate already exists
+  // Check if certificate already exists (simplified)
   useEffect(() => {
-    const checkExistingCertificate = async () => {
-      if (user && courseId) {
-        const exists = await hasCertificate(user.uid, courseId);
-        setCertificateGenerated(exists);
-      }
-    };
-    checkExistingCertificate();
+    // Temporary - always false
+    setCertificateGenerated(false);
   }, [user, courseId]);
 
   // Fetch course content
@@ -141,7 +138,6 @@ export default function CoursePage() {
           
           const data = courseDoc.data();
           
-          // Fetch videos from sub-collection
           const videoSnap = await getDocs(collection(db, `courses/${courseId}/videos`));
           videoSnap.forEach((docSnap) => {
             const data = docSnap.data();
@@ -156,7 +152,6 @@ export default function CoursePage() {
             });
           });
 
-          // Fetch resources with order field
           if (data.resources?.length) {
             data.resources.forEach((res, i) => {
               allItems.push({
@@ -172,7 +167,6 @@ export default function CoursePage() {
           }
         }
 
-        // Sort by order
         allItems.sort((a, b) => (a.order || 0) - (b.order || 0));
         console.log("📋 Items:", allItems.map(i => ({ title: i.title, order: i.order })));
         
@@ -210,41 +204,42 @@ export default function CoursePage() {
     setPlayerLoading(true);
   };
 
-  // 🔥 FIXED: toggleComplete with async/await
+  // toggleComplete with proper async/await
   const toggleComplete = async (id) => {
-    setCompletedItems(prev => {
-      const newState = { ...prev, [id]: !prev[id] };
+    // Get current value
+    const currentValue = completedItems[id] || false;
+    const newValue = !currentValue;
+    
+    // Update UI immediately
+    setCompletedItems(prev => ({
+      ...prev,
+      [id]: newValue
+    }));
+    
+    if (user && courseId) {
+      // Update localStorage
+      const key = `completed-${user.uid}-${courseId}`;
+      const newState = { ...completedItems, [id]: newValue };
+      localStorage.setItem(key, JSON.stringify(newState));
+      console.log("💾 Saved to localStorage:", newState);
       
-      if (user && courseId) {
-        const key = `completed-${user.uid}-${courseId}`;
-        localStorage.setItem(key, JSON.stringify(newState));
-        console.log("💾 Saved to localStorage:", newState);
-        
-        // 🔥 IMPORTANT: Async function properly handle karo
-        const saveToFirestore = async () => {
-          try {
-            const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
-            await setDoc(progressRef, {
-              userId: user.uid,
-              courseId,
-              videoId: id,
-              completed: newState[id],
-              lastWatched: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            }, { merge: true });
-            console.log("✅ Firestore sync successful");
-          } catch (error) {
-            console.error("❌ Firestore error:", error);
-            // Optional: Show error to user
-            alert("Failed to save progress. Please check your connection.");
-          }
-        };
-        
-        saveToFirestore();
+      // Save to Firestore
+      try {
+        const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
+        await setDoc(progressRef, {
+          userId: user.uid,
+          courseId,
+          videoId: id,
+          completed: newValue,
+          lastWatched: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        console.log("✅ Firestore sync successful for video:", id, "completed:", newValue);
+      } catch (error) {
+        console.error("❌ Firestore error:", error);
+        alert("Failed to save progress. Please check your connection.");
       }
-      
-      return newState;
-    });
+    }
   };
 
   const handleContinue = () => {
@@ -263,6 +258,7 @@ export default function CoursePage() {
     }
   };
 
+  // Simplified certificate generation (for testing)
   const handleGenerateCertificate = async () => {
     if (!user || !courseData) {
       alert("Please login to generate certificate");
@@ -271,45 +267,17 @@ export default function CoursePage() {
     
     setGeneratingCert(true);
     try {
-      let fullName = "Student";
-      
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        if (userData.firstName && userData.lastName) {
-          fullName = `${userData.firstName} ${userData.lastName}`;
-        } else if (userData.displayName) {
-          fullName = userData.displayName;
-        } else if (user.displayName) {
-          fullName = user.displayName;
-        } else {
-          fullName = user.email?.split('@')[0] || "Student";
-        }
-      } else {
-        fullName = user.displayName || user.email?.split('@')[0] || "Student";
-      }
-      
-      const { pdf, certificateId, pdfUrl } = await generateCertificatePDF(
-        { name: fullName, email: user.email },
-        { title: courseData.title || "Course Completion" }
-      );
-      
-      await saveCertificate(user.uid, courseId, certificateId, pdf);
-      
-      setCertificatePdfBlob(pdf);
-      setCertificateUrl(pdfUrl);
-      
+      // Simulate certificate generation
       setTimeout(() => {
-        setShowModal(true);
-      }, 100);
-      
-      setCertificateGenerated(true);
-      setShowCertificate(false);
+        alert("Certificate generation would happen here");
+        setGeneratingCert(false);
+        setCertificateGenerated(true);
+        setShowCertificate(false);
+      }, 2000);
       
     } catch (error) {
       console.error("Certificate error:", error);
       alert("Certificate generation failed. Please try again.");
-    } finally {
       setGeneratingCert(false);
     }
   };

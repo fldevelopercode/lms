@@ -36,26 +36,28 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     return () => unsubscribe();
   }, []);
 
-  // 🔥 FIX 1: Load progress from Firestore (priority) then localStorage
+  // Load progress from Firestore (priority) then localStorage
   useEffect(() => {
     const loadProgress = async () => {
       if (!user || !videoId || !courseId) return;
 
       try {
-        // ✅ Priority 1: Firestore se load karo (mobile sync ke liye)
+        // Priority 1: Firestore se load karo
         const progressDoc = doc(db, "userProgress", `${user.uid}_${courseId}_${videoId}`);
         const docSnap = await getDoc(progressDoc);
         
         if (docSnap.exists()) {
           const data = docSnap.data();
           const time = data.currentTime || 0;
-          console.log(`📥 Firestore progress: ${time}s for ${videoId}`);
+          const completed = data.completed || false;
+          
+          console.log(`📥 Firestore progress: ${time}s, completed: ${completed} for ${videoId}`);
           
           setSavedProgress(time);
           // Update localStorage
-          localStorage.setItem(`progress-${videoId}`, JSON.stringify({ time }));
+          localStorage.setItem(`progress-${videoId}`, JSON.stringify({ time, completed }));
         } else {
-          // ✅ Priority 2: Fallback to localStorage
+          // Priority 2: Fallback to localStorage
           const cached = localStorage.getItem(`progress-${videoId}`);
           if (cached) {
             const { time } = JSON.parse(cached);
@@ -85,10 +87,9 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     progressSetRef.current = false;
   }, [videoId]);
 
-  // 🔥 FIX 2: Set video position with better timing
+  // Set video position with better timing
   useEffect(() => {
     if (playerReady && savedProgress > 1 && playerRef.current && !progressSetRef.current) {
-      // Thoda delay do taake player properly initialize ho
       setTimeout(() => {
         if (playerRef.current) {
           console.log(`🎯 Seeking to: ${savedProgress}s`);
@@ -99,12 +100,14 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     }
   }, [playerReady, savedProgress]);
 
-  // 🔥 FIX 3: Save progress with better frequency
+  // 🔥 FIX: Save progress with completed flag
   const saveProgress = async (currentTime, duration) => {
     if (!user || !videoId || !courseId || !currentTime) return;
 
-    // Har 5 second mein save karo (instead of 10)
-    if (Math.floor(currentTime) % 5 === 0) {
+    const isCompleted = currentTime / duration > 0.95;
+    
+    // Har 5 second mein save karo
+    if (Math.floor(currentTime) % 5 === 0 || isCompleted) {
       try {
         const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${videoId}`);
         await setDoc(progressRef, {
@@ -113,12 +116,17 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
           videoId,
           currentTime,
           duration,
+          completed: isCompleted,
           lastWatched: new Date().toISOString(),
-          completed: currentTime / duration > 0.95
+          updatedAt: new Date().toISOString()
         }, { merge: true });
         
-        localStorage.setItem(`progress-${videoId}`, JSON.stringify({ time: currentTime }));
-        console.log(`💾 Saved: ${Math.floor(currentTime)}s`);
+        localStorage.setItem(`progress-${videoId}`, JSON.stringify({ 
+          time: currentTime,
+          completed: isCompleted 
+        }));
+        
+        console.log(`💾 Saved: ${Math.floor(currentTime)}s, completed: ${isCompleted}`);
       } catch (error) {
         console.error("Save error:", error);
       }
