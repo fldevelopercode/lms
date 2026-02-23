@@ -26,6 +26,7 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
   const [isBuffering, setIsBuffering] = useState(true);
   const playerRef = useRef(null);
   const progressSetRef = useRef(false);
+  const lastSavedTimeRef = useRef(0); // 🔥 Track last saved time
 
   useEffect(() => {
     setIsMounted(true);
@@ -36,13 +37,12 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     return () => unsubscribe();
   }, []);
 
-  // Load progress from Firestore (priority) then localStorage
+  // Load progress from Firestore
   useEffect(() => {
     const loadProgress = async () => {
       if (!user || !videoId || !courseId) return;
 
       try {
-        // Priority 1: Firestore se load karo
         const progressDoc = doc(db, "userProgress", `${user.uid}_${courseId}_${videoId}`);
         const docSnap = await getDoc(progressDoc);
         
@@ -54,25 +54,24 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
           console.log(`📥 Firestore progress: ${time}s, completed: ${completed} for ${videoId}`);
           
           setSavedProgress(time);
-          // Update localStorage
           localStorage.setItem(`progress-${videoId}`, JSON.stringify({ time, completed }));
+          lastSavedTimeRef.current = time; // 🔥 Track last saved
         } else {
-          // Priority 2: Fallback to localStorage
           const cached = localStorage.getItem(`progress-${videoId}`);
           if (cached) {
             const { time } = JSON.parse(cached);
             console.log(`📦 Cache progress: ${time}s for ${videoId}`);
             setSavedProgress(time);
+            lastSavedTimeRef.current = time;
           }
         }
       } catch (error) {
         console.error("Error loading progress:", error);
-        
-        // Fallback to localStorage on error
         const cached = localStorage.getItem(`progress-${videoId}`);
         if (cached) {
           const { time } = JSON.parse(cached);
           setSavedProgress(time);
+          lastSavedTimeRef.current = time;
         }
       }
     };
@@ -85,9 +84,10 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     setPlayerReady(false);
     setIsBuffering(true);
     progressSetRef.current = false;
+    lastSavedTimeRef.current = 0; // 🔥 Reset on video change
   }, [videoId]);
 
-  // Set video position with better timing
+  // Set video position
   useEffect(() => {
     if (playerReady && savedProgress > 1 && playerRef.current && !progressSetRef.current) {
       setTimeout(() => {
@@ -100,33 +100,51 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     }
   }, [playerReady, savedProgress]);
 
-  // 🔥 FIX: Save progress with completed flag
+  // 🔥 FIXED: Save progress with completed flag and prevent downgrade
   const saveProgress = async (currentTime, duration) => {
     if (!user || !videoId || !courseId || !currentTime) return;
 
+    // Prevent too frequent saves
+    if (Math.abs(currentTime - lastSavedTimeRef.current) < 3) return;
+    
     const isCompleted = currentTime / duration > 0.95;
     
     // Har 5 second mein save karo
     if (Math.floor(currentTime) % 5 === 0 || isCompleted) {
       try {
         const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${videoId}`);
+        
+        // 🔥 IMPORTANT: Pehle existing data check karo
+        const docSnap = await getDoc(progressRef);
+        const existingCompleted = docSnap.exists() ? docSnap.data().completed : false;
+        
+        // 🔥 FIX: Agar already completed hai to overwrite mat karo
+        if (existingCompleted && !isCompleted) {
+          console.log(`⏭️ Skipping save - already completed for ${videoId}`);
+          return;
+        }
+        
+        // 🔥 FIX: Don't downgrade completed status
+        const finalCompleted = isCompleted || existingCompleted;
+        
         await setDoc(progressRef, {
           userId: user.uid,
           courseId,
           videoId,
           currentTime,
           duration,
-          completed: isCompleted,
+          completed: finalCompleted,
           lastWatched: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }, { merge: true });
         
         localStorage.setItem(`progress-${videoId}`, JSON.stringify({ 
           time: currentTime,
-          completed: isCompleted 
+          completed: finalCompleted 
         }));
         
-        console.log(`💾 Saved: ${Math.floor(currentTime)}s, completed: ${isCompleted}`);
+        lastSavedTimeRef.current = currentTime; // 🔥 Update last saved time
+        console.log(`💾 Saved: ${Math.floor(currentTime)}s, completed: ${finalCompleted}`);
       } catch (error) {
         console.error("Save error:", error);
       }

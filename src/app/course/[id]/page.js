@@ -52,69 +52,75 @@ export default function CoursePage() {
       return;
     }
 
-    const loadCompletion = async () => {
-      console.log("📡 Loading completion for user:", user.uid);
+   const loadCompletion = async () => {
+  console.log("📡 Loading completion for user:", user.uid);
+  
+  try {
+    const progressQuery = query(
+      collection(db, "userProgress"),
+      where("userId", "==", user.uid),
+      where("courseId", "==", courseId)
+    );
+    
+    const snapshot = await getDocs(progressQuery);
+    const firestoreData = {};
+    
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.videoId) {
+        // 🔥 FIX: Explicitly check for true, fallback to false
+        firestoreData[data.videoId] = data.completed === true;
+        console.log(`📌 ${data.videoId}: completed = ${data.completed}`);
+      }
+    });
+    
+    console.log("📥 Firestore data loaded:", firestoreData);
+    
+    // Always set from Firestore if data exists
+    if (Object.keys(firestoreData).length > 0) {
+      setCompletedItems(firestoreData);
       
-      try {
-        const progressQuery = query(
-          collection(db, "userProgress"),
-          where("userId", "==", user.uid),
-          where("courseId", "==", courseId)
-        );
-        
-        const snapshot = await getDocs(progressQuery);
-        const firestoreData = {};
-        
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          if (data.videoId) {
-            firestoreData[data.videoId] = data.completed || false;
-          }
-        });
-        
-        console.log("📥 Firestore data:", firestoreData);
-        
-        if (Object.keys(firestoreData).length > 0) {
-          setCompletedItems(firestoreData);
-          
-          const key = `completed-${user.uid}-${courseId}`;
-          localStorage.setItem(key, JSON.stringify(firestoreData));
-        } else {
-          const key = `completed-${user.uid}-${courseId}`;
-          const saved = localStorage.getItem(key);
-          
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              setCompletedItems(parsed);
-            } catch (e) {
-              setCompletedItems({});
-            }
-          } else {
-            setCompletedItems({});
-          }
-        }
-        
-        const oldKey = `completed-${courseId}`;
-        localStorage.removeItem(oldKey);
-        
-      } catch (error) {
-        console.error("❌ Error loading from Firestore:", error);
-        
-        const key = `completed-${user.uid}-${courseId}`;
-        const saved = localStorage.getItem(key);
-        if (saved) {
-          try {
-            setCompletedItems(JSON.parse(saved));
-          } catch (e) {
-            setCompletedItems({});
-          }
-        } else {
+      // Update localStorage
+      const key = `completed-${user.uid}-${courseId}`;
+      localStorage.setItem(key, JSON.stringify(firestoreData));
+      console.log("💾 Updated localStorage with Firestore data");
+    } else {
+      // Fallback to localStorage
+      const key = `completed-${user.uid}-${courseId}`;
+      const saved = localStorage.getItem(key);
+      
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setCompletedItems(parsed);
+          console.log("📦 Using localStorage data:", parsed);
+        } catch (e) {
           setCompletedItems({});
         }
+      } else {
+        setCompletedItems({});
       }
-    };
-
+    }
+    
+    const oldKey = `completed-${courseId}`;
+    localStorage.removeItem(oldKey);
+    
+  } catch (error) {
+    console.error("❌ Error loading from Firestore:", error);
+    
+    const key = `completed-${user.uid}-${courseId}`;
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      try {
+        setCompletedItems(JSON.parse(saved));
+      } catch (e) {
+        setCompletedItems({});
+      }
+    } else {
+      setCompletedItems({});
+    }
+  }
+};
     loadCompletion();
   }, [user, courseId]);
 
