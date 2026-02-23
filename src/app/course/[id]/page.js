@@ -127,7 +127,7 @@ export default function CoursePage() {
     checkExistingCertificate();
   }, [user, courseId]);
 
-  // Fetch course content - ✅ FIXED with proper order
+  // Fetch course content
   useEffect(() => {
     const fetchItems = async () => {
       if (!courseId) return;
@@ -141,7 +141,7 @@ export default function CoursePage() {
           
           const data = courseDoc.data();
           
-          // ✅ Fetch videos from sub-collection
+          // Fetch videos from sub-collection
           const videoSnap = await getDocs(collection(db, `courses/${courseId}/videos`));
           videoSnap.forEach((docSnap) => {
             const data = docSnap.data();
@@ -156,7 +156,7 @@ export default function CoursePage() {
             });
           });
 
-          // ✅ Fetch resources with order field
+          // Fetch resources with order field
           if (data.resources?.length) {
             data.resources.forEach((res, i) => {
               allItems.push({
@@ -165,16 +165,16 @@ export default function CoursePage() {
                 title: res.title || "Untitled",
                 url: res.url || "",
                 content: res.content || "",
-                order: res.order || 0,  // ✅ Use order from Firebase
+                order: res.order || 0,
                 ...res,
               });
             });
           }
         }
 
-        // ✅ Sort by order
+        // Sort by order
         allItems.sort((a, b) => (a.order || 0) - (b.order || 0));
-        console.log("📋 Items with order:", allItems.map(i => ({ title: i.title, order: i.order })));
+        console.log("📋 Items:", allItems.map(i => ({ title: i.title, order: i.order })));
         
         setItems(allItems);
         
@@ -210,8 +210,8 @@ export default function CoursePage() {
     setPlayerLoading(true);
   };
 
-  // toggleComplete with Firestore sync
-  const toggleComplete = (id) => {
+  // 🔥 FIXED: toggleComplete with async/await
+  const toggleComplete = async (id) => {
     setCompletedItems(prev => {
       const newState = { ...prev, [id]: !prev[id] };
       
@@ -220,17 +220,27 @@ export default function CoursePage() {
         localStorage.setItem(key, JSON.stringify(newState));
         console.log("💾 Saved to localStorage:", newState);
         
-        const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
-        setDoc(progressRef, {
-          userId: user.uid,
-          courseId,
-          videoId: id,
-          completed: newState[id],
-          lastWatched: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }, { merge: true })
-        .then(() => console.log("✅ Firestore sync successful"))
-        .catch(error => console.error("❌ Firestore error:", error));
+        // 🔥 IMPORTANT: Async function properly handle karo
+        const saveToFirestore = async () => {
+          try {
+            const progressRef = doc(db, "userProgress", `${user.uid}_${courseId}_${id}`);
+            await setDoc(progressRef, {
+              userId: user.uid,
+              courseId,
+              videoId: id,
+              completed: newState[id],
+              lastWatched: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+            console.log("✅ Firestore sync successful");
+          } catch (error) {
+            console.error("❌ Firestore error:", error);
+            // Optional: Show error to user
+            alert("Failed to save progress. Please check your connection.");
+          }
+        };
+        
+        saveToFirestore();
       }
       
       return newState;
@@ -348,7 +358,7 @@ export default function CoursePage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header with Back button */}
+      {/* Header */}
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <button
