@@ -1,4 +1,5 @@
-// components/VideoPlayer.js
+// components/VideoPlayer.js (web wala)
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -27,7 +28,8 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
   const playerRef = useRef(null);
   const progressSetRef = useRef(false);
   const lastSavedTimeRef = useRef(0);
-  const saveTimeoutRef = useRef(null); // 🔥 NEW: Debounce saves
+  const saveTimeoutRef = useRef(null);
+  const [currentUserId, setCurrentUserId] = useState(null); // 🔥 NEW: Track current user
 
   useEffect(() => {
     setIsMounted(true);
@@ -37,11 +39,20 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     const unsubscribe = auth.onAuthStateChanged((user) => {
       console.log("🔥 Auth state changed:", user?.email);
       setUser(user);
+      setCurrentUserId(user?.uid || null); // 🔥 Set current user ID
+      
+      // 🔥 CRITICAL: Clear progress when user changes
+      if (!user) {
+        // User logged out
+        setSavedProgress(0);
+        progressSetRef.current = false;
+        lastSavedTimeRef.current = 0;
+      }
     });
     return () => unsubscribe();
   }, []);
 
-  // Load progress from Firestore
+  // Load progress from Firestore only
   useEffect(() => {
     const loadProgress = async () => {
       if (!user || !videoId || !courseId) {
@@ -59,28 +70,25 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
           const time = data.currentTime || 0;
           const completed = data.completed || false;
           
-          console.log(`✅ Loaded: ${time}s, completed: ${completed}`);
+          console.log(`✅ Loaded from Firestore: ${time}s, completed: ${completed}`);
           setSavedProgress(time);
-          localStorage.setItem(`progress-${videoId}`, JSON.stringify({ time, completed }));
           lastSavedTimeRef.current = time;
         } else {
-          const cached = localStorage.getItem(`progress-${videoId}`);
-          if (cached) {
-            const { time } = JSON.parse(cached);
-            console.log(`📦 Cache: ${time}s`);
-            setSavedProgress(time);
-            lastSavedTimeRef.current = time;
-          }
+          // 🔥 IMPORTANT: No Firestore data = new user = start from 0
+          console.log(`🆕 No Firestore data for ${videoId}, starting from 0`);
+          setSavedProgress(0);
+          lastSavedTimeRef.current = 0;
         }
       } catch (error) {
         console.error("❌ Error loading progress:", error);
+        setSavedProgress(0);
       }
     };
 
     loadProgress();
-  }, [user, videoId, courseId]);
+  }, [user, videoId, courseId, currentUserId]); // 🔥 Added currentUserId dependency
 
-  // Reset for new video
+  // Reset for new video or new user
   useEffect(() => {
     setPlayerReady(false);
     setIsBuffering(true);
@@ -91,7 +99,7 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
-  }, [videoId]);
+  }, [videoId, currentUserId]); // 🔥 Reset when user changes too
 
   // Set video position
   useEffect(() => {
@@ -108,8 +116,9 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
 
   // 🔥 FIXED: Debounced save function
   const saveProgress = async (currentTime, duration) => {
-    // 🔥 CRITICAL: Check user on every save
-    if (!auth.currentUser || !videoId || !courseId) {
+    // 🔥 CRITICAL: Check current user on every save
+    const currentUser = auth.currentUser;
+    if (!currentUser || !videoId || !courseId) {
       console.log("⏭️ No user, skipping save");
       return;
     }
@@ -121,6 +130,7 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
 
     saveTimeoutRef.current = setTimeout(async () => {
       try {
+        // 🔥 Double-check user still exists
         const currentUser = auth.currentUser;
         if (!currentUser) return;
 
@@ -152,18 +162,21 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
             lastWatched: new Date().toISOString()
           }, { merge: true });
           
-          localStorage.setItem(`progress-${videoId}`, JSON.stringify({ 
-            time: currentTime,
-            completed: finalCompleted 
-          }));
-          
           lastSavedTimeRef.current = currentTime;
-          console.log(`💾 Saved: ${Math.floor(currentTime)}s`);
+          console.log(`💾 Saved to Firestore: ${Math.floor(currentTime)}s`);
         }
       } catch (error) {
         console.error("❌ Save error:", error);
       }
-    }, 1000); // Wait 1 second before saving
+    }, 1000);
+  };
+
+  // 🔥 FIXED: Clear user data on logout
+  const handleUserLogout = () => {
+    setSavedProgress(0);
+    progressSetRef.current = false;
+    lastSavedTimeRef.current = 0;
+    setCurrentUserId(null);
   };
 
   if (!isMounted) return null;
@@ -223,7 +236,8 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
             <p className="text-sm">
               {!playerReady ? "Loading player..." : "Buffering..."}
             </p>
-            {savedProgress > 0 && (
+            {/* 🔥 FIXED: Only show resume if user has progress */}
+            {savedProgress > 1 && user && (
               <p className="text-xs text-purple-400 mt-2">
                 Resume at {Math.floor(savedProgress / 60)}:
                 {Math.floor(savedProgress % 60).toString().padStart(2, "0")}
@@ -233,8 +247,8 @@ const VideoPlayer = ({ videoUrl, videoId, courseId, onVideoEnd }) => {
         </div>
       )}
 
-      {/* Resume Badge */}
-      {savedProgress > 1 && playerReady && !isBuffering && (
+      {/* 🔥 FIXED: Resume Badge - Only show for current user with progress */}
+      {savedProgress > 1 && playerReady && !isBuffering && user && (
         <div className="absolute top-2 left-2 bg-purple-600 text-white px-3 py-1 rounded-full text-sm z-10 shadow-lg">
           ⏯️ Resume {Math.floor(savedProgress / 60)}:
           {Math.floor(savedProgress % 60).toString().padStart(2, "0")}

@@ -13,70 +13,107 @@ export default function Dashboard() {
   const [courses, setCourses] = useState([]);
   const [certificates, setCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState(null); // 🔥 Track current user
 
-  // 1️⃣ Check login & fetch profile
+  // 🔥 FIXED: Check login & fetch profile with proper cleanup
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
+        // 🔥 CRITICAL: Set current user ID first
+        setCurrentUserId(currentUser.uid);
+        
+        // 🔥 Clear old localStorage data for previous users
+        clearOldUserData(currentUser.uid);
+        
         const userDocRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userDocRef);
+        
         if (userSnap.exists()) {
           setUserProfile({ uid: currentUser.uid, ...userSnap.data() });
         } else {
-          await setDoc(userDocRef, { 
+          // 🔥 New user - create fresh profile
+          const newProfile = { 
             email: currentUser.email, 
             firstName: "",
             lastName: "",
             name: "", 
             enrolledCourses: [], 
-            profilePicture: "" 
-          });
-          setUserProfile({ 
-            uid: currentUser.uid, 
-            email: currentUser.email, 
-            firstName: "",
-            lastName: "",
-            name: "", 
-            enrolledCourses: [], 
-            profilePicture: "" 
-          });
+            profilePicture: "",
+            createdAt: new Date().toISOString()
+          };
+          
+          await setDoc(userDocRef, newProfile);
+          setUserProfile({ uid: currentUser.uid, ...newProfile });
+          
+          // 🔥 Clear any old certificates in localStorage
+          clearAllCertificateData();
         }
-        
-        // 🔥 Store last user ID to detect new user
-        const lastUserId = localStorage.getItem('lastUserId');
-        if (lastUserId && lastUserId !== currentUser.uid) {
-          console.log('🆕 New user detected, clearing old data...');
-          const keys = Object.keys(localStorage);
-          keys.forEach(key => {
-            if (key.startsWith('completed-') && !key.includes(currentUser.uid)) {
-              localStorage.removeItem(key);
-            }
-          });
-        }
-        localStorage.setItem('lastUserId', currentUser.uid);
         
         // Fetch certificates after user is loaded
         fetchCertificates(currentUser.uid);
       } else {
+        // User logged out - clear everything
+        setUserProfile(null);
+        setCertificates([]);
+        setCurrentUserId(null);
+        clearAllUserData();
         router.push("/login");
       }
       setLoading(false);
     });
+    
     return () => unsubscribe();
   }, [router]);
 
-  // 🔥 Clear old course completion data on login
-  useEffect(() => {
-    if (!userProfile?.uid) return;
+  // 🔥 FIXED: Clear old user data from localStorage
+  const clearOldUserData = (newUserId) => {
+    const lastUserId = localStorage.getItem('lastUserId');
     
+    // If different user, clear ALL old data
+    if (lastUserId && lastUserId !== newUserId) {
+      console.log('🆕 New user detected, clearing old data...');
+      
+      // Clear all course completion data
+      const keys = Object.keys(localStorage);
+      keys.forEach(key => {
+        if (key.startsWith('completed-') || 
+            key.startsWith('progress-') || 
+            key.startsWith('cert-') ||
+            key.includes(lastUserId)) {
+          console.log(`🗑️ Removing: ${key}`);
+          localStorage.removeItem(key);
+        }
+      });
+    }
+    
+    // Set new user ID
+    localStorage.setItem('lastUserId', newUserId);
+  };
+
+  // 🔥 Clear all certificate data
+  const clearAllCertificateData = () => {
     const keys = Object.keys(localStorage);
     keys.forEach(key => {
-      if (key.startsWith('completed-') && !key.includes(userProfile.uid)) {
-        console.log("🧹 Removing old key:", key);
+      if (key.startsWith('cert-') || key.includes('certificate')) {
         localStorage.removeItem(key);
       }
     });
-  }, [userProfile]);
+  };
+
+  // 🔥 Clear all user data on logout
+  const clearAllUserData = () => {
+    const userId = auth.currentUser?.uid;
+    const keys = Object.keys(localStorage);
+    
+    keys.forEach(key => {
+      if (userId && key.includes(userId)) {
+        localStorage.removeItem(key);
+      }
+    });
+    
+    localStorage.removeItem('lastUserId');
+    sessionStorage.removeItem('userProfile');
+  };
 
   // 2️⃣ Fetch courses
   useEffect(() => {
@@ -87,41 +124,57 @@ export default function Dashboard() {
     fetchCourses();
   }, []);
 
-  // 3️⃣ Fetch certificates with query
+  // 3️⃣ Fetch certificates with query - ONLY for current user
   const fetchCertificates = async (userId) => {
+    if (!userId) return;
+    
     try {
+      console.log(`📜 Fetching certificates for user: ${userId}`);
       const certQuery = query(
         collection(db, "certificates"),
         where("userId", "==", userId)
       );
       const querySnapshot = await getDocs(certQuery);
       const userCerts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      console.log(`✅ Found ${userCerts.length} certificates`);
       setCertificates(userCerts);
+      
+      // 🔥 Store in sessionStorage (not localStorage) for this session only
+      sessionStorage.setItem(`certificates-${userId}`, JSON.stringify(userCerts));
     } catch (error) {
       console.error("Error fetching certificates:", error);
     }
   };
 
-  // 4️⃣ Watch sessionStorage for live profile updates
+  // 4️⃣ Watch for profile updates
   useEffect(() => {
     const handleStorageChange = () => {
       const storedProfile = sessionStorage.getItem("userProfile");
       if (storedProfile) {
-        setUserProfile(JSON.parse(storedProfile));
+        const parsed = JSON.parse(storedProfile);
+        // Only update if it's the same user
+        if (parsed.uid === currentUserId) {
+          setUserProfile(parsed);
+        }
       }
     };
+    
     window.addEventListener("storage", handleStorageChange);
     const interval = setInterval(handleStorageChange, 2000);
+    
     return () => {
       window.removeEventListener("storage", handleStorageChange);
       clearInterval(interval);
     };
-  }, []);
+  }, [currentUserId]);
 
   // 🔥 FIXED: Logout function
   const handleLogout = async () => {
     try {
       const userId = auth.currentUser?.uid;
+      
+      // Clear user-specific data
       if (userId) {
         const keys = Object.keys(localStorage);
         keys.forEach(key => {
@@ -131,23 +184,29 @@ export default function Dashboard() {
         });
       }
       
+      // Clear all storage
+      localStorage.removeItem('lastUserId');
+      sessionStorage.removeItem('userProfile');
+      
+      // Clear certificates
+      setCertificates([]);
+      
       await signOut(auth);
-      sessionStorage.removeItem("userProfile");
       router.push("/");
     } catch (error) {
       console.error("Logout error:", error);
     }
   };
 
-  // 🔥 FIXED: handleBuyCourse - UI immediately update
+  // 🔥 FIXED: handleBuyCourse with proper user check
   const handleBuyCourse = async (courseId) => {
-    if (!userProfile) return;
+    if (!userProfile || !currentUserId) return;
     
     try {
       const userRef = doc(db, "users", userProfile.uid);
       await setDoc(userRef, { enrolledCourses: arrayUnion(courseId) }, { merge: true });
       
-      // 🔥 FIX: Correctly update enrolledCourses array
+      // Update UI immediately
       const updatedEnrolled = [...(userProfile.enrolledCourses || []), courseId];
       
       setUserProfile(prev => ({ 
@@ -200,6 +259,8 @@ export default function Dashboard() {
             Welcome, {getFullName()}!
           </h1>
           <p className="text-gray-600 mt-1">{userProfile.email}</p>
+          {/* 🔥 Show user ID for debugging (optional) */}
+          <p className="text-xs text-gray-400 mt-1">ID: {userProfile.uid?.substring(0,8)}...</p>
         </div>
         
         <button
@@ -210,7 +271,7 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {/* Certificates Section */}
+      {/* Certificates Section - ONLY show if belongs to current user */}
       {certificates.length > 0 && (
         <div className="mb-10">
           <div className="flex items-center justify-between mb-4">
@@ -250,6 +311,13 @@ export default function Dashboard() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* No Certificates Message */}
+      {certificates.length === 0 && currentUserId && (
+        <div className="mb-10 p-4 bg-blue-50 rounded-lg text-center">
+          <p className="text-blue-600">No certificates yet. Complete a course to earn one! 🎯</p>
         </div>
       )}
 
